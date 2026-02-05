@@ -85,24 +85,42 @@ import time
 async def root(request: Request):
     data = await request.json()
     guesses = data.get("guesses")
+    
+    if guesses != []:
+        filterSolutions(guesses)
         
-    treshold = 5
+    numberOfAnswers = len(possibleAnswers)
     
     doneEntropy = False
-    if guesses != []:
-        if len(possibleAnswers) > treshold:
-            filterSolutions(guesses)
-            start = time.time()
-            entropy = calculate_entropy()
-            print(f"Took {time.time() - start:.2f}s")
-        else:
-            for guess in guesses:
-                possibleAnswers.discard(guess["word"])
+    if 2 < numberOfAnswers <= 4:
+        best = max(
+            valid_words,
+            key=lambda g: len({
+                get_pattern(g, s) for s in possibleAnswers
+            })
+        )
+        
+        best_entropy = entropy_for_guess(best, possibleAnswers)[1]
+
+        
+        entropyDivider = (best, best_entropy)
+        
+        entropy = [entropy_for_guess(word, possibleAnswers) for word in possibleAnswers if word != best]
+        entropy = sorted(entropy, key=lambda x: x[1], reverse=True)
+        if(entropy[0][1] < entropyDivider[1]):
+            entropy.insert(0, entropyDivider)
+        
         doneEntropy = True
-    
-    print(len(possibleAnswers))
+    else:    
+        if numberOfAnswers < len(valid_words):
+                start = time.time()
+                entropy = calculate_entropy()
+                print(f"Took {time.time() - start:.2f}s")
+                doneEntropy = True
+
+    print(numberOfAnswers)
     if doneEntropy:
-        if(len(possibleAnswers) <= treshold):
+        if(len(possibleAnswers) <= 2):
             return JSONResponse(status_code=200, content={"mode": "remaining" ,"possibleAnswers": list(possibleAnswers)})
         else:
             return JSONResponse(status_code=200, content={"mode": "entropy", "entropies": entropy})
@@ -220,6 +238,7 @@ def get_pattern(guess, solution):
 # helper for single guess
 def entropy_for_guess(guess, possibleAnswers):
     pattern_counts = defaultdict(int)
+
     for solution in possibleAnswers:
         pattern = get_pattern(guess, solution)
         pattern_counts[pattern] += 1
@@ -229,14 +248,29 @@ def entropy_for_guess(guess, possibleAnswers):
     for count in pattern_counts.values():
         p = count / total
         H -= p * math.log2(p)
+
+    # bias to solutions
+    if guess in possibleAnswers:
+        H += 0.05
+
     return (guess, H)
+
 
 def calculate_entropy():
     entropies = []
-    guesses = list(valid_words) if len(possibleAnswers) > 100 else list(possibleAnswers)
-    with ProcessPoolExecutor(max_workers=4) as executor:
-        futures = [executor.submit(entropy_for_guess, guess, possibleAnswers) for guess in guesses]
+
+    if len(possibleAnswers) <= 2:
+        guesses = list(possibleAnswers)
+    else:
+        guesses = list(valid_words)   # MINDIG engedett
+
+    with ProcessPoolExecutor(max_workers=8) as executor:
+        futures = [
+            executor.submit(entropy_for_guess, guess, possibleAnswers)
+            for guess in guesses
+        ]
         for future in as_completed(futures):
             entropies.append(future.result())
+
     entropies.sort(key=lambda x: x[1], reverse=True)
     return entropies[:10]
