@@ -262,7 +262,7 @@ def calculate_entropy():
     if len(possibleAnswers) <= 2:
         guesses = list(possibleAnswers)
     else:
-        guesses = list(valid_words)   # MINDIG engedett
+        guesses = list(valid_words)
 
     with ProcessPoolExecutor(max_workers=8) as executor:
         futures = [
