@@ -11,17 +11,17 @@ import math
 # for speeding up
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-# Szavak betöltése
+# load words
 file_path = os.path.join(os.path.dirname(__file__), "words.txt")
 with open(file_path, "r") as f:
     valid_words = set(word.strip().lower() for word in f)
 
 app = FastAPI()
 
-# CORS engedélyezése
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # or ["http://127.0.0.1:5500"]
+    allow_origins=["*"],  # ["http://127.0.0.1:5500"]
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -217,7 +217,6 @@ def get_pattern(guess, solution):
 
 # checks all possible guesses against possible answers
 
-
 # helper for single guess
 def entropy_for_guess(guess, possibleAnswers):
     pattern_counts = defaultdict(int)
@@ -234,7 +233,7 @@ def entropy_for_guess(guess, possibleAnswers):
 
 def calculate_entropy():
     entropies = []
-    guesses = list(valid_words) if len(possibleAnswers) > 150 else list(possibleAnswers)
+    guesses = list(valid_words) if len(possibleAnswers) > 100 else list(possibleAnswers)
     with ProcessPoolExecutor(max_workers=4) as executor:
         futures = [executor.submit(entropy_for_guess, guess, possibleAnswers) for guess in guesses]
         for future in as_completed(futures):
