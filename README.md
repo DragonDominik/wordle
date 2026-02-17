@@ -36,7 +36,7 @@ Windows
 Linux/Mac
 source .venv/bin/activate
 ```
-4. Install dependacies
+4. Install dependencies
 ```
 pip install -r requirements.txt
 ```
