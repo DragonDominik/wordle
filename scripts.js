@@ -1,0 +1,398 @@
+const table = document.querySelector("#wordleTable");
+const daySelector = document.querySelector("#daySelector");
+const resultContainer = document.querySelector("#resultContainer");
+const entropyList = document.querySelector("#entropyList");
+
+//default today
+const today = new Date().toISOString().split("T")[0];
+daySelector.value = today;
+setAnswer(today);
+
+let row = 1;
+let col = 1;
+let guesses = [];
+
+let doEntropy = false;
+
+let isActionBlocked = false;
+
+daySelector.addEventListener("change", changeWordleAnswer);
+
+// change to new wordle date
+async function changeWordleAnswer() {
+  daySelector.blur();
+  isActionBlocked = true;
+  //reseting
+  row = 1;
+  col = 1;
+  resultContainer.textContent = "";
+  for (let r = 0; r < 6; r++) {
+    for (let c = 0; c < 5; c++) {
+      const cell = table.rows[r].cells[c];
+      cell.textContent = "";
+      cell.classList.remove(
+        "bg-gray-500",
+        "bg-yellow-500",
+        "bg-green-500",
+        "border-gray-500",
+        "border-yellow-500",
+        "border-green-500",
+      );
+      cell.classList.add("border-stone-400");
+
+      const allKeys = document.querySelectorAll("#keyboard button");
+      allKeys.forEach((key) => {
+        key.classList.remove("bg-stone-700", "bg-gray-500", "bg-yellow-500", "bg-green-500");
+        key.classList.add("bg-stone-700");
+        key.classList.remove(
+          "hover:bg-stone-600",
+          "hover:bg-gray-400",
+          "hover:bg-yellow-400",
+          "hover:bg-green-400",
+        );
+        key.classList.add("hover:bg-stone-600");
+      });
+    }
+  }
+
+  //change wordle
+  date = daySelector.value;
+  await setAnswer(date);
+  guesses = [];
+  if (doEntropy) {
+    getEntropy(guesses);
+  }
+  isActionBlocked = false;
+}
+
+async function setAnswer(date) {
+  try {
+    const response = await fetch("http://127.0.0.1:8000/set-wordle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date }),
+    });
+
+    const data = await response.json();
+
+    //incorrect word
+    if (!data.success) {
+      console.error(data.message);
+    }
+  } catch (err) {
+    console.error("Error while calling API:", err);
+  }
+}
+
+document.addEventListener("keydown", function (event) {
+  if (isActionBlocked) return;
+  //clarify which key
+  if (event.key == "Backspace") {
+    deleteCharacter();
+  } else if (event.key == "Enter") {
+    confirmWord();
+  } else if (/^[a-zA-Z]$/.test(event.key)) {
+    writeKey(event.key);
+  }
+});
+
+//prints key into next empty box
+function writeKey(letter) {
+  if (isActionBlocked) return;
+  if (col <= 5) {
+    const cell = table.rows[row - 1].cells[col - 1];
+    cell.textContent = letter.toUpperCase();
+    cell.classList.remove("pop");
+    void cell.offsetWidth;
+    cell.classList.add("pop");
+    col++;
+  }
+}
+
+//delete character
+function deleteCharacter() {
+  if (isActionBlocked) return;
+  if (col > 1) {
+    col--;
+    table.rows[row - 1].cells[col - 1].textContent = "";
+  }
+}
+
+//run api check
+async function confirmWord() {
+  if (isActionBlocked) return;
+  if (col < 6) {
+    return;
+  }
+
+  isActionBlocked = true;
+
+  //get word
+  let word = Array.from(table.rows[row - 1].cells)
+    .map((c) => c.textContent.trim())
+    .join("")
+    .toLowerCase();
+
+  try {
+    const response = await fetch("http://127.0.0.1:8000/check-word", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ word }),
+    });
+
+    const data = await response.json();
+
+    //incorrect word
+    if (!data.found) {
+      shakeCurrentRow();
+      isActionBlocked = false;
+      return;
+    }
+    if (doEntropy) {
+      entropyList.innerHTML = "Loading...";
+    }
+    evaluateAnswer(word);
+  } catch (err) {
+    console.error("Error while calling API:", err);
+  }
+}
+
+// not existing word shake
+function shakeCurrentRow() {
+  const curRow = table.rows[row - 1];
+  curRow.classList.add("shake");
+  curRow.addEventListener(
+    "animationend",
+    () => {
+      curRow.classList.remove("shake");
+    },
+    { once: true },
+  );
+}
+
+// runs evaluation of the word
+async function evaluateAnswer(word) {
+  try {
+    const response = await fetch("http://127.0.0.1:8000/eval", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ word }),
+    });
+
+    const data = await response.json();
+    const results = data.result;
+
+    const victory = new Set(results).size === 1 && results[0] === "green";
+    ended = victory || row == 6;
+
+    await colorFields(results);
+    guesses.push({
+      word: word,
+      result: results,
+    });
+    isActionBlocked = false;
+
+    if (ended) {
+      isActionBlocked = true;
+      resultContainer.textContent = victory ? `You won! Score: ${row}` : "You lost!";
+
+      resultContainer.classList.remove("pop");
+      void resultContainer.offsetWidth;
+      resultContainer.classList.add("pop");
+      entropyList.innerHTML = "Game ended!";
+
+      if (victory) {
+        for (let i = 0; i <= 4; i++) {
+          const cell = table.rows[row - 1].cells[i];
+          setTimeout(() => {
+            cell.classList.remove("pop");
+            cell.classList.remove("flip");
+            void cell.offsetWidth;
+            cell.classList.add("flip");
+          }, i * 100);
+        }
+      }
+    } else {
+      if (doEntropy) {
+        getEntropy(guesses);
+      }
+    }
+
+    //reset
+    row++;
+    col = 1;
+  } catch (err) {
+    console.error("Error while calling API:", err);
+  }
+}
+
+// colors answer
+function colorFields(results) {
+  return new Promise((resolve) => {
+    for (let i = 0; i <= 4; i++) {
+      const cell = table.rows[row - 1].cells[i];
+      setTimeout(() => {
+        cell.classList.remove("pop");
+        cell.classList.add("flip");
+        cell.classList.add(`bg-${results[i]}-500`);
+        cell.classList.remove("border-stone-400");
+        cell.classList.add(`border-${results[i]}-500`);
+
+        updateKeyboardColor(cell.textContent, results[i]);
+
+        // resolve after the last cell animation ends
+        if (i === 4) {
+          cell.addEventListener(
+            "animationend",
+            () => {
+              resolve();
+            },
+            { once: true },
+          );
+        }
+      }, i * 300);
+    }
+  });
+}
+
+//keyboard
+const keyboardRows = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
+
+// generate keys
+keyboardRows.forEach((rowLetters, rowIndex) => {
+  const rowDiv = document.getElementById(`row${rowIndex + 1}`);
+  rowLetters.split("").forEach((letter) => {
+    const keyButton = document.createElement("button");
+    keyButton.textContent = letter;
+    keyButton.className =
+      "w-10 h-12 bg-stone-700 text-white font-bold rounded-md hover:bg-stone-600";
+    keyButton.dataset.letter = letter.toLowerCase();
+    // click event
+    keyButton.addEventListener("click", () => {
+      writeKey(letter);
+    });
+
+    rowDiv.appendChild(keyButton);
+  });
+});
+
+const row3 = document.getElementById("row3");
+
+// ENTER
+const enterBtn = document.createElement("button");
+enterBtn.textContent = "Enter";
+enterBtn.className = "w-16 h-12 bg-stone-700 text-white font-bold rounded-md hover:bg-stone-600";
+enterBtn.addEventListener("click", confirmWord);
+row3.insertBefore(enterBtn, row3.firstChild);
+
+// BACKSPACE
+const backspaceBtn = document.createElement("button");
+backspaceBtn.className =
+  "w-16 h-12 bg-stone-700 text-white font-bold rounded-md hover:bg-stone-600 flex items-center justify-center";
+backspaceBtn.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 9.75 14.25 12m0 0 2.25 2.25M14.25 12l2.25-2.25M14.25 12 12 14.25m-2.58 4.92-6.374-6.375a1.125 1.125 0 0 1 0-1.59L9.42 4.83c.21-.211.497-.33.795-.33H19.5a2.25 2.25 0 0 1 2.25 2.25v10.5a2.25 2.25 0 0 1-2.25 2.25h-9.284c-.298 0-.585-.119-.795-.33Z" />
+    </svg>
+  `;
+backspaceBtn.addEventListener("click", deleteCharacter); // meglévő függvényed
+row3.appendChild(backspaceBtn);
+
+//colors key
+function updateKeyboardColor(letter, color) {
+  const key = document.querySelector(`button[data-letter='${letter.toLowerCase()}']`);
+  if (!key) return;
+
+  let currentColor = null;
+  if (key.classList.contains("bg-green-500")) {
+    return;
+  }
+
+  key.classList.remove("bg-stone-700", "bg-gray-500", "bg-yellow-500", "bg-green-500");
+  key.classList.remove(
+    "hover:bg-stone-600",
+    "hover:bg-gray-400",
+    "hover:bg-yellow-400",
+    "hover:bg-green-400",
+  );
+
+  key.classList.add(`bg-${color}-500`, `hover:bg-${color}-400`);
+}
+
+// ENTROPY
+
+async function getEntropy(guesses) {
+  try {
+    const response = await fetch("http://127.0.0.1:8000/get-entropy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guesses }),
+    });
+
+    const data = await response.json();
+    listEntropy(data);
+  } catch (err) {
+    console.error("Error while calling API:", err);
+  }
+}
+const entropyButton = document.getElementById("entropyButton");
+const entropyOverlay = document.getElementById("entropyOverlay");
+
+entropyButton.addEventListener("mouseenter", () => {
+  entropyOverlay.classList.remove("hidden");
+  // pozicionáljuk a gomb alá
+  const rect = entropyButton.getBoundingClientRect();
+  entropyOverlay.style.top = rect.bottom + window.scrollY + "px";
+  entropyOverlay.style.left = rect.left + window.scrollX + "px";
+});
+
+entropyButton.addEventListener("click", () => {
+  doEntropy = !doEntropy;
+  entropyButton.blur();
+  if (doEntropy) {
+    entropyButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+            </svg>`;
+    entropyList.textContent = "Loading...";
+    getEntropy(guesses);
+  } else {
+    entropyButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-5">
+  <path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
+</svg>
+`;
+    entropyList.innerHTML =
+      "<span class='text-red-500'>WARNING</span> Enabling entropy causes there to be a load time (around 3-10 seconds) between each word!";
+  }
+});
+
+entropyButton.addEventListener("mouseleave", () => {
+  entropyOverlay.classList.add("hidden");
+});
+
+function listEntropy(data) {
+  entropyList.innerHTML = ""; // clear previous list
+
+  if (data.mode === "entropy") {
+    data.entropies.forEach(([word, score]) => {
+      const div = document.createElement("div");
+      div.classList.add("flex", "justify-between", "w-full");
+      div.innerHTML = `
+  <span>${word.toUpperCase()}</span>
+  <span>-</span>
+  <span class="text-indigo-500">${score.toFixed(2)}</span>
+`;
+      entropyList.appendChild(div);
+    });
+  } else if (data.mode === "remaining") {
+    data.possibleAnswers.forEach((word) => {
+      const div = document.createElement("div");
+      div.classList.add("flex", "justify-between", "w-full");
+      div.innerHTML = `
+    <span>${word.toUpperCase()}</span>
+    <span>-</span>
+    <span class="text-red-500">${(1 / data.possibleAnswers.length).toFixed(2)}</span>
+  `;
+      entropyList.appendChild(div);
+    });
+  }
+}
